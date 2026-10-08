@@ -21,3 +21,36 @@ class Alert(BaseModel):
     titulo_alerta: str
     descricao_alerta: str
     severidade_alerta: str
+
+    @field_validator('titulo_alerta')
+    def titulo_nao_vazio(cls, v):
+        if not v or not v.strip():
+            raise ValueError('O nome do marcador é obrigatório')
+        return v.strip()
+
+    @field_validator('tipo_alerta')
+    def tipo_valido(cls, v):
+        tipos_validos = {'condition', 'medication', 'allergy'}
+        if v not in tipos_validos:
+            raise ValueError(f'Tipo de marcador inválido. Deve ser um dos: {", ".join(tipos_validos)}')
+        return v
+
+
+class MarkerCreateUpdate(BaseModel):
+    tipo_alerta: str
+    titulo_alerta: str
+    descricao_alerta: Optional[str] = ""
+    severidade_alerta: Optional[str] = "medium"
+
+    @field_validator('titulo_alerta')
+    def titulo_nao_vazio(cls, v):
+        if not v or not v.strip():
+            raise ValueError('O nome do marcador é obrigatório')
+        return v.strip()
+
+    @field_validator('tipo_alerta')
+    def tipo_valido(cls, v):
+        tipos_validos = {'condition', 'medication', 'allergy'}
+        if v not in tipos_validos:
+            raise ValueError(f'Tipo de marcador inválido. Deve ser um dos: {", ".join(tipos_validos)}')
+        return v

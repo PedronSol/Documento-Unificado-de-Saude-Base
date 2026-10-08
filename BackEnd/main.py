@@ -48,6 +48,12 @@ class Alert(BaseModel):
     descricao_alerta: str
     severidade_alerta: str
 
+class MarkerCreateUpdate(BaseModel):
+    tipo_alerta: str
+    titulo_alerta: str
+    descricao_alerta: Optional[str] = ""
+    severidade_alerta: Optional[str] = "medium"
+
 class Document(BaseModel):
     id_documento: int
     titulo_documento: str
@@ -210,3 +216,153 @@ def delete_vaccine(cpf_paciente: str, id_vacina: int):
     cursor.close()
     conn.close()
     return {"message": "Vacina removida com sucesso!"}
+
+@app.get("/patients/{cpf_paciente}/markers", response_model=List[Alert])
+def get_markers(cpf_paciente: str):
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    
+    query = """
+        SELECT id_alerta, tipo_alerta, titulo_alerta, descricao_alerta, severidade_alerta
+        FROM alertas 
+        WHERE paciente_id = %s
+        ORDER BY id_alerta DESC
+    """
+    cursor.execute(query, (cpf_paciente.strip(),))
+    markers = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+    return markers
+
+@app.post("/patients/{cpf_paciente}/markers", status_code=201)
+def add_marker(cpf_paciente: str, marker: MarkerCreateUpdate):
+    titulo = marker.titulo_alerta.strip()
+    if not titulo:
+        raise HTTPException(status_code=400, detail="O nome do marcador é obrigatório.")
+
+    tipos_validos = {"condition", "medication", "allergy"}
+    if marker.tipo_alerta not in tipos_validos:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de marcador inválido. Opções permitidas: {', '.join(tipos_validos)}."
+        )
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    
+    try:
+        check_query = """
+            SELECT id_alerta, titulo_alerta, tipo_alerta 
+            FROM alertas 
+            WHERE paciente_id = %s AND LOWER(TRIM(titulo_alerta)) = LOWER(%s)
+        """
+        cursor.execute(check_query, (cpf_paciente.strip(), titulo))
+        existente = cursor.fetchone()
+        
+        if existente:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "message": "Esta condição ou medicação já está cadastrada.",
+                    "existing_marker_id": existente["id_alerta"]
+                }
+            )
+
+        insert_query = """
+            INSERT INTO alertas (paciente_id, tipo_alerta, titulo_alerta, descricao_alerta, severidade_alerta)
+            VALUES (%s, %s, %s, %s, %s)
+        """
+        cursor.execute(insert_query, (
+            cpf_paciente.strip(),
+            marker.tipo_alerta,
+            titulo,
+            marker.descricao_alerta.strip() if marker.descricao_alerta else "",
+            marker.severidade_alerta if marker.severidade_alerta else "medium"
+        ))
+        conn.commit()
+        novo_id = cursor.lastrowid
+
+        return {
+            "message": "Marcador salvo com sucesso!",
+            "id_marcador": novo_id
+        }
+    except mysql.connector.Error as err:
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar marcador: {err}")
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.put("/patients/{cpf_paciente}/markers/{id_marcador}")
+def update_marker(cpf_paciente: str, id_marcador: int, marker: MarkerCreateUpdate):
+    titulo = marker.titulo_alerta.strip()
+    if not titulo:
+        raise HTTPException(status_code=400, detail="O nome do marcador é obrigatório.")
+
+    tipos_validos = {"condition", "medication", "allergy"}
+    if marker.tipo_alerta not in tipos_validos:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de marcador inválido. Opções permitidas: {', '.join(tipos_validos)}."
+        )
+
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+    try:
+        check_query = """
+            SELECT id_alerta 
+            FROM alertas 
+            WHERE paciente_id = %s AND LOWER(TRIM(titulo_alerta)) = LOWER(%s) AND id_alerta != %s
+        """
+        cursor.execute(check_query, (cpf_paciente.strip(), titulo, id_marcador))
+        if cursor.fetchone():
+            raise HTTPException(
+                status_code=409,
+                detail="Já existe outro marcador cadastrado com este nome."
+            )
+
+        update_query = """
+            UPDATE alertas
+            SET tipo_alerta = %s, titulo_alerta = %s, descricao_alerta = %s, severidade_alerta = %s
+            WHERE id_alerta = %s AND paciente_id = %s
+        """
+        cursor.execute(update_query, (
+            marker.tipo_alerta,
+            titulo,
+            marker.descricao_alerta.strip() if marker.descricao_alerta else "",
+            marker.severidade_alerta if marker.severidade_alerta else "medium",
+            id_marcador,
+            cpf_paciente.strip()
+        ))
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Marcador ou paciente não encontrado.")
+
+        return {"message": "Marcador atualizado com sucesso!"}
+    except mysql.connector.Error as err:
+        raise HTTPException(status_code=500, detail=f"Erro ao atualizar marcador: {err}")
+    finally:
+        cursor.close()
+        conn.close()
+
+@app.delete("/patients/{cpf_paciente}/markers/{id_marcador}")
+def delete_marker(cpf_paciente: str, id_marcador: int):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        query = "DELETE FROM alertas WHERE id_alerta = %s AND paciente_id = %s"
+        cursor.execute(query, (id_marcador, cpf_paciente.strip()))
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Marcador ou paciente não encontrado.")
+
+        return {"message": "Marcador removido com sucesso!"}
+    except mysql.connector.Error as err:
+        raise HTTPException(status_code=500, detail=f"Erro ao remover marcador: {err}")
+    finally:
+        cursor.close()
+        conn.close()
